@@ -196,7 +196,8 @@ PHP_METHOD(RedisArray, __construct)
 	RedisArray *ra = NULL;
 	zend_bool b_index = 0, b_autorehash = 0, b_pconnect = 0;
 	HashTable *hPrev = NULL, *hOpts = NULL;
-  long l_retry_interval = 0;
+    long l_retry_interval = 0;
+    int i_reshard_level  = 0;
   	zend_bool b_lazy_connect = 0;
 
 	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "z|a", &z0, &z_opts) == FAILURE) {
@@ -257,6 +258,22 @@ PHP_METHOD(RedisArray, __construct)
 			}
 		}
 
+		/* extract reshard_level option. */
+		/* Only valid if no previous hosts array */
+		if (!hPrev) {
+			zval **z_reshard_level_pp;
+	        if (FAILURE != zend_hash_find(hOpts, "reshard_level", sizeof("reshard_level"), (void**)&z_reshard_level_pp)) {
+				if (Z_TYPE_PP(z_reshard_level_pp) == IS_LONG || Z_TYPE_PP(z_reshard_level_pp) == IS_STRING) {
+					if (Z_TYPE_PP(z_reshard_level_pp) == IS_LONG) {
+						i_reshard_level = (int)Z_LVAL_PP(z_reshard_level_pp);
+					}
+					else {
+						i_reshard_level = atoi(Z_STRVAL_PP(z_reshard_level_pp));
+					}
+				}
+			}
+		}
+
 		/* extract lazy connect option. */
 		if(FAILURE != zend_hash_find(hOpts, "lazy_connect", sizeof("lazy_connect"), (void**)&zpData) && Z_TYPE_PP(zpData) == IS_BOOL) {
 			b_lazy_connect = Z_BVAL_PP(zpData);
@@ -270,7 +287,7 @@ PHP_METHOD(RedisArray, __construct)
 			break;
 
 		case IS_ARRAY:
-			ra = ra_make_array(Z_ARRVAL_P(z0), z_fun, z_dist, hPrev, b_index, b_pconnect, l_retry_interval, b_lazy_connect TSRMLS_CC);
+			ra = ra_make_array(Z_ARRVAL_P(z0), z_fun, z_dist, hPrev, b_index, b_pconnect, l_retry_interval, i_reshard_level, b_lazy_connect TSRMLS_CC);
 			break;
 
 		default:

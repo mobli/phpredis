@@ -83,17 +83,56 @@ By default and in order to be compatible with other libraries, phpredis will try
 For instance, the keys “{user:1}:name” and “{user:1}:email” will be stored on the same server as only “user:1” will be hashed. You can provide a custom function name in your redis array with the "function" option; this function will be called every time a key needs to be hashed. It should take a string and return a string.
 
 
-## Custom key distribution function
-In order to control the distribution of keys by hand, you can provide a custom function or closure that returns the server number, which is the index in the array of servers that you created the RedisArray object with.
+## Easy resharding
+When the reshard_level parameter is used, it will indicate the level of resharding of the initial redis array.
 
-For instance, instanciate a RedisArray object with `new RedisArray(array("us-host", "uk-host", "de-host"), array("distributor" => "dist"));` and write a function called "dist" that will return `2` for all the keys that should end up on the "de-host" server.
+For instance, suppose you started with 4 shards as follows:
+<pre>
+0 => 0                    1                    2                     3
+</pre>
+
+At level 1 of resharding, keys will be assigned to the following servers:
+<pre>
+1 => 0         4          1         5          2          6          3          7
+</pre>
+
+At level 2, keys will be assigned to the following servers:
+<pre>
+2 => 0    8    4    12    1    9    5    13    2    10    6    14    3    11    7    15
+</pre>
+
+At level 3, keys will be assigned to the following servers:
+<pre>
+3 => 0 16 8 24 4 20 12 28 1 17 9 25 5 21 13 29 2 18 10 26 6 22 14 30 3 19 11 27 7 23 15 31
+</pre>
+
+And so on...
+
+The idea here is to be able to reshard the keys easily, without moving keys from 1 server to another.
+
+The procedure to adopt is simple:
+
+For each initial shard, setup a slave. For instance, for shard 1 we setup slave 5.
+
+Keys will now be assigned to either shard 1 or shard 5. Once the application sees the new settings, just setup shard 5 as a master. Then, in order to reclaim memory, just cleanup keys from shard 1 that belong to shard 5 and vice-versa.
+
+On the next iteration, setup a new slave 9 for shard 1 and a new slave 13 for shard 5.
+
+Update the application settings, disconnect the new slaves and clean up the shards from keys that don't belong there anymore.
+
+Apply the same procedure for each resharding iteration.
 
 ### Example
 <pre>
-$ra = new RedisArray(array("host1", "host2", "host3", "host4", "host5", "host6", "host7", "host8"), array("distributor" => array(2, 2)));
+$ra = new RedisArray(array("host1", "host2", "host3", "host4", "host5", "host6", "host7", "host8"), array("reshard_level" => 2));
 </pre>
 
-This declares that we started with 2 shards and moved to 4 then 8 shards. The number of initial shards is 2 and the resharding level (or number of iterations) is 2.
+This declares that the array is made up of 8 shards after 2 levels of resharding. This implies that we started with 2 shards and moved to 4 then 8 shards.
+
+## Custom key distribution function
+In order to control the distribution of keys by hand, you can provide a custom function or closure that returns the server number, which is the index in the array of servers that you created the RedisArray object with.
+
+For instance, instanciate a RedisArray object with `new RedisArray(array("us-host", "uk-host", "de-host"), array("distributor" => "dist"));` and write a function called "dist" that will return `2` for all the keys that should end up on the "de-host" server. The function should take at least 1 parameter (the key) and optionaly the resharding level.
 
 ## Migrating keys
 

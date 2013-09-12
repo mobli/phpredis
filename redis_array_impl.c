@@ -165,12 +165,14 @@ RedisArray *ra_load_array(const char *name TSRMLS_DC) {
 	zval *z_params_index;
 	zval *z_params_autorehash;
 	zval *z_params_retry_interval;
+	zval *z_params_reshard_level;
 	zval *z_params_pconnect;
 	zval *z_params_lazy_connect;
 	RedisArray *ra = NULL;
 
 	zend_bool b_index = 0, b_autorehash = 0, b_pconnect = 0;
 	long l_retry_interval = 0;
+	int i_reshard_level = 0;
 	zend_bool b_lazy_connect = 0;
 	HashTable *hHosts = NULL, *hPrev = NULL;
 
@@ -249,6 +251,26 @@ RedisArray *ra_load_array(const char *name TSRMLS_DC) {
 		}
 	}
 
+	/* find reshard level option */
+	/* Only valid if no previous hosts array */
+	if (!hHosts) {
+		MAKE_STD_ZVAL(z_params_reshard_level);
+		array_init(z_params_reshard_level);
+		sapi_module.treat_data(PARSE_STRING, estrdup(INI_STR("redis.arrays.reshard_level")), z_params_reshard_level TSRMLS_CC);
+		if (zend_hash_find(Z_ARRVAL_P(z_params_reshard_level), name, strlen(name) + 1, (void **) &z_data_pp) != FAILURE) {
+			if (Z_TYPE_PP(z_data_pp) == IS_LONG || Z_TYPE_PP(z_data_pp) == IS_STRING) {
+				if (Z_TYPE_PP(z_data_pp) == IS_LONG) {
+					i_reshard_level = (int)Z_LVAL_PP(z_data_pp);
+				}
+				else {
+					i_reshard_level = atoi(Z_STRVAL_PP(z_data_pp));
+				}
+			}
+		}
+		zval_dtor(z_params_reshard_level);
+		efree(z_params_reshard_level);
+	}
+
 	/* find pconnect option */
     MAKE_STD_ZVAL(z_params_pconnect);
     array_init(z_params_pconnect);
@@ -269,7 +291,7 @@ RedisArray *ra_load_array(const char *name TSRMLS_DC) {
 	}
 
 	/* create RedisArray object */
-	ra = ra_make_array(hHosts, z_fun, z_dist, hPrev, b_index, b_pconnect, l_retry_interval, b_lazy_connect TSRMLS_CC);
+	ra = ra_make_array(hHosts, z_fun, z_dist, hPrev, b_index, b_pconnect, l_retry_interval, i_reshard_level, b_lazy_connect TSRMLS_CC);
 	ra->auto_rehash = b_autorehash;
 
 	/* cleanup */
@@ -294,7 +316,7 @@ RedisArray *ra_load_array(const char *name TSRMLS_DC) {
 }
 
 RedisArray *
-ra_make_array(HashTable *hosts, zval *z_fun, zval *z_dist, HashTable *hosts_prev, zend_bool b_index, zend_bool b_pconnect, long retry_interval, zend_bool b_lazy_connect TSRMLS_DC) {
+ra_make_array(HashTable *hosts, zval *z_fun, zval *z_dist, HashTable *hosts_prev, zend_bool b_index, zend_bool b_pconnect, long retry_interval, int reshard_level, zend_bool b_lazy_connect TSRMLS_DC) {
 
 	int count = zend_hash_num_elements(hosts);
 
@@ -307,6 +329,7 @@ ra_make_array(HashTable *hosts, zval *z_fun, zval *z_dist, HashTable *hosts_prev
 	ra->z_dist = NULL;
 	ra->z_multi_exec = NULL;
 	ra->index = b_index;
+	ra->reshard_level = reshard_level;
 	ra->auto_rehash = 0;
 
 	/* init array data structures */
@@ -315,7 +338,7 @@ ra_make_array(HashTable *hosts, zval *z_fun, zval *z_dist, HashTable *hosts_prev
 	if(NULL == ra_load_hosts(ra, hosts, retry_interval, b_lazy_connect TSRMLS_CC)) {
 		return NULL;
 	}
-	ra->prev = hosts_prev ? ra_make_array(hosts_prev, z_fun, z_dist, NULL, b_index, b_pconnect, retry_interval, b_lazy_connect TSRMLS_CC) : NULL;
+	ra->prev = hosts_prev ? ra_make_array(hosts_prev, z_fun, z_dist, NULL, b_index, b_pconnect, retry_interval, 0, b_lazy_connect TSRMLS_CC) : NULL;
 
 	/* copy function if provided */
 	if(z_fun) {
@@ -401,7 +424,7 @@ zend_bool
 ra_call_distributor(RedisArray *ra, const char *key, int key_len, int *pos TSRMLS_DC) {
 
 	zval z_ret;
-	zval *z_argv0;
+	zval *z_argv[2];
 
 	/* check that we can call the extractor function */
 	if(!zend_is_callable_ex(ra->z_dist, NULL, 0, NULL, NULL, NULL, NULL TSRMLS_CC)) {
@@ -411,10 +434,13 @@ ra_call_distributor(RedisArray *ra, const char *key, int key_len, int *pos TSRML
 	//convert_to_string(ra->z_fun);
 
 	/* call extraction function */
-	MAKE_STD_ZVAL(z_argv0);
-	ZVAL_STRINGL(z_argv0, key, key_len, 0);
-	call_user_function(EG(function_table), NULL, ra->z_dist, &z_ret, 1, &z_argv0 TSRMLS_CC);
-	efree(z_argv0);
+	MAKE_STD_ZVAL(z_argv[0]);
+	ZVAL_STRINGL(z_argv[0], key, key_len, 0);
+	MAKE_STD_ZVAL(z_argv[1]);
+	ZVAL_LONG(z_argv[1], ra->reshard_level);
+	call_user_function(EG(function_table), NULL, ra->z_dist, &z_ret, 2, z_argv TSRMLS_CC);
+	efree(z_argv[0]);
+	efree(z_argv[1]);
 
 	if(Z_TYPE(z_ret) != IS_LONG) {
 		zval_dtor(&z_ret);
@@ -444,15 +470,38 @@ ra_find_node(RedisArray *ra, const char *key, int key_len, int *out_pos TSRMLS_D
                 }
         }
         else {
+                int num_reshards = ra->reshard_level;
+               	int num_original = ra->count;
+                if (num_reshards) {
+                	int factor = 0;
+                	factor = 1 << num_reshards;
+					num_original = num_original / factor;
+					if (ra->count != num_original * factor) {
+                        return NULL;
+					}
+				}
                 /* hash */
                 hash = rcrc32(out, out_len);
                 efree(out);
         
                 /* get position on ring */
                 uint64_t h64 = hash;
-                h64 *= ra->count;
+                h64 *= num_original;
                 h64 /= 0xffffffff;
                 pos = (int)h64;
+                /* easy resharding */
+                if (num_reshards) {
+					/* Infer the new position */
+					for (int i = 0; i < num_reshards; i++) {
+						int total = num_original * 2;
+						h64 = hash;
+						h64 *= total;
+						h64 /= 0xffffffff;
+						h64 %= 2;
+						pos = pos + (h64 * num_original);
+						num_original = total;
+					}
+                }
         }
         if(out_pos) *out_pos = pos;
 
