@@ -33,6 +33,19 @@ PHPAPI void redis_stream_close(RedisSock *redis_sock TSRMLS_DC) {
 	}
 }
 
+PHPAPI void redis_throw_exception(zend_class_entry *exception_ce, const char *file, int line, const char *cmd, const char *cause, RedisSock *redis_sock TSRMLS_DC)
+{
+    char message[1024];
+    if (!cmd) {
+        sprintf(message, "%s in %s, line %d (%s:%d)", cause, file, line, redis_sock->host, redis_sock->port);
+    }
+    else {
+        sprintf(message, "%s in %s, line %d, command: %s (%s:%d)", cause, file, line, cmd, redis_sock->host, redis_sock->port);
+    }
+    php_log_err(message);
+    zend_throw_exception(redis_exception_ce, message, 0 TSRMLS_CC);
+}
+
 PHPAPI int redis_check_eof(RedisSock *redis_sock TSRMLS_DC)
 {
     int eof;
@@ -41,32 +54,31 @@ PHPAPI int redis_check_eof(RedisSock *redis_sock TSRMLS_DC)
 	if (!redis_sock->stream) {
 		return -1;
 	}
-
 	eof = php_stream_eof(redis_sock->stream);
     for (; eof; count++) {
         if((MULTI == redis_sock->mode) || redis_sock->watching || count == 10) { /* too many failures */
-	    if(redis_sock->stream) { /* close stream if still here */
+            if(redis_sock->stream) { /* close stream if still here */
                 redis_stream_close(redis_sock TSRMLS_CC);
                 redis_sock->stream = NULL;
 				redis_sock->mode   = ATOMIC;
                 redis_sock->status = REDIS_SOCK_STATUS_FAILED;
                 redis_sock->watching = 0;
+	        }
+            redis_throw_exception(redis_exception_ce, __FILE__, __LINE__, NULL, "Connection lost", redis_sock TSRMLS_CC);
+	        return -1;
 	    }
-            zend_throw_exception(redis_exception_ce, "Connection lost", 0 TSRMLS_CC);
-	    return -1;
-	}
-	if(redis_sock->stream) { /* close existing stream before reconnecting */
+	    if (redis_sock->stream) { /* close existing stream before reconnecting */
             redis_stream_close(redis_sock TSRMLS_CC);
             redis_sock->stream = NULL;
 			redis_sock->mode   = ATOMIC;
             redis_sock->watching = 0;
-	}
-    // Wait for a while before trying to reconnect
-    if (redis_sock->retry_interval) {
-    	// Random factor to avoid having several (or many) concurrent connections trying to reconnect at the same time
-   		long retry_interval = (count ? redis_sock->retry_interval : (random() % redis_sock->retry_interval));
-    	usleep(retry_interval);
-    }
+	    }
+        // Wait for a while before trying to reconnect
+        if (redis_sock->retry_interval) {
+        	// Random factor to avoid having several (or many) concurrent connections trying to reconnect at the same time
+   	    	long retry_interval = (count ? redis_sock->retry_interval : (random() % redis_sock->retry_interval));
+    	   usleep(retry_interval);
+        }
         redis_sock_connect(redis_sock TSRMLS_CC); /* reconnect */
         if(redis_sock->stream) { /*  check for EOF again. */
             eof = php_stream_eof(redis_sock->stream);
@@ -115,7 +127,7 @@ PHPAPI zval *redis_sock_read_multibulk_reply_zval(INTERNAL_FUNCTION_PARAMETERS, 
         redis_sock->status = REDIS_SOCK_STATUS_FAILED;
         redis_sock->mode = ATOMIC;
         redis_sock->watching = 0;
-        zend_throw_exception(redis_exception_ce, "read error on connection", 0 TSRMLS_CC);
+        redis_throw_exception(redis_exception_ce, __FILE__, __LINE__, NULL, "read error on connection", redis_sock TSRMLS_CC);
         return NULL;
     }
 
@@ -158,7 +170,7 @@ PHPAPI char *redis_sock_read_bulk_reply(RedisSock *redis_sock, int bytes TSRMLS_
             got = php_stream_read(redis_sock->stream, reply + offset, bytes-offset);
             if (got <= 0) {
                 /* Error or EOF */
-				zend_throw_exception(redis_exception_ce, "socket error on read socket", 0 TSRMLS_CC);
+                redis_throw_exception(redis_exception_ce, __FILE__, __LINE__, NULL, "socket error on read socket", redis_sock TSRMLS_CC);
                 break;
             }
             offset += got;
@@ -191,7 +203,7 @@ PHPAPI char *redis_sock_read(RedisSock *redis_sock, int *buf_len TSRMLS_DC)
         redis_sock->status = REDIS_SOCK_STATUS_FAILED;
         redis_sock->mode = ATOMIC;
         redis_sock->watching = 0;
-        zend_throw_exception(redis_exception_ce, "read error on connection", 0 TSRMLS_CC);
+        redis_throw_exception(redis_exception_ce, __FILE__, __LINE__, NULL, "read error on connection", redis_sock TSRMLS_CC);
         return NULL;
     }
 
@@ -201,7 +213,7 @@ PHPAPI char *redis_sock_read(RedisSock *redis_sock, int *buf_len TSRMLS_DC)
 			redis_sock_set_err(redis_sock, inbuf+1, err_len);
 			/* stale data */
 			if(memcmp(inbuf + 1, "-ERR SYNC ", 10) == 0) {
-				zend_throw_exception(redis_exception_ce, "SYNC with master in progress", 0 TSRMLS_CC);
+                redis_throw_exception(redis_exception_ce, __FILE__, __LINE__, NULL, "SYNC with master in progress", redis_sock TSRMLS_CC);
 			}
             return NULL;
 
@@ -895,7 +907,7 @@ PHPAPI int redis_sock_read_multibulk_reply_zipped_with_flag(INTERNAL_FUNCTION_PA
         redis_sock->status = REDIS_SOCK_STATUS_FAILED;
         redis_sock->mode = ATOMIC;
         redis_sock->watching = 0;
-        zend_throw_exception(redis_exception_ce, "read error on connection", 0 TSRMLS_CC);
+        redis_throw_exception(redis_exception_ce, __FILE__, __LINE__, NULL, "read error on connection", redis_sock TSRMLS_CC);
         return -1;
     }
 
@@ -1271,7 +1283,7 @@ PHPAPI int redis_sock_read_multibulk_reply(INTERNAL_FUNCTION_PARAMETERS, RedisSo
         redis_sock->status = REDIS_SOCK_STATUS_FAILED;
         redis_sock->mode = ATOMIC;
         redis_sock->watching = 0;
-        zend_throw_exception(redis_exception_ce, "read error on connection", 0 TSRMLS_CC);
+        redis_throw_exception(redis_exception_ce, __FILE__, __LINE__, NULL, "read error on connection", redis_sock TSRMLS_CC);
         return -1;
     }
 
@@ -1318,7 +1330,7 @@ PHPAPI int redis_sock_read_multibulk_reply_raw(INTERNAL_FUNCTION_PARAMETERS, Red
         redis_sock->status = REDIS_SOCK_STATUS_FAILED;
         redis_sock->mode = ATOMIC;
         redis_sock->watching = 0;
-        zend_throw_exception(redis_exception_ce, "read error on connection", 0 TSRMLS_CC);
+        redis_throw_exception(redis_exception_ce, __FILE__, __LINE__, NULL, "read error on connection", redis_sock TSRMLS_CC);
         return -1;
     }
 
@@ -1397,7 +1409,7 @@ PHPAPI int redis_sock_read_multibulk_reply_assoc(INTERNAL_FUNCTION_PARAMETERS, R
         redis_sock->status = REDIS_SOCK_STATUS_FAILED;
         redis_sock->mode = ATOMIC;
         redis_sock->watching = 0;
-        zend_throw_exception(redis_exception_ce, "read error on connection", 0 TSRMLS_CC);
+        redis_throw_exception(redis_exception_ce, __FILE__, __LINE__, NULL, "read error on connection", redis_sock TSRMLS_CC);
         return -1;
     }
 
@@ -1449,7 +1461,7 @@ PHPAPI int redis_sock_read_multibulk_reply_assoc(INTERNAL_FUNCTION_PARAMETERS, R
 PHPAPI int redis_sock_write(RedisSock *redis_sock, char *cmd, size_t sz TSRMLS_DC)
 {
 	if(redis_sock && redis_sock->status == REDIS_SOCK_STATUS_DISCONNECTED) {
-		zend_throw_exception(redis_exception_ce, "Connection closed", 0 TSRMLS_CC);
+        redis_throw_exception(redis_exception_ce, __FILE__, __LINE__, cmd, "Connection closed", redis_sock TSRMLS_CC);
 		return -1;
 	}
     if(-1 == redis_check_eof(redis_sock TSRMLS_CC)) {
@@ -1645,7 +1657,7 @@ redis_sock_gets(RedisSock *redis_sock, char *buf, int buf_size, size_t *line_siz
 		redis_sock->watching = 0;
 
 		// Throw a read error exception
-		zend_throw_exception(redis_exception_ce, "read error on connection", 0 TSRMLS_CC);
+        redis_throw_exception(redis_exception_ce, __FILE__, __LINE__, NULL, "read error on connection", redis_sock TSRMLS_CC);
 	}
 
 	// We don't need \r\n
@@ -1667,7 +1679,7 @@ redis_read_reply_type(RedisSock *redis_sock, REDIS_REPLY_TYPE *reply_type, int *
 
 	// Attempt to read the reply-type byte
 	if((*reply_type = php_stream_getc(redis_sock->stream)) == EOF) {
-		zend_throw_exception(redis_exception_ce, "socket error on read socket", 0 TSRMLS_CC);
+        redis_throw_exception(redis_exception_ce, __FILE__, __LINE__, NULL, "socket error on read socket", redis_sock TSRMLS_CC);
 	}
 
 	// If this is a BULK, MULTI BULK, or simply an INTEGER response, we can extract the value or size info here
@@ -1705,7 +1717,7 @@ redis_read_variant_line(RedisSock *redis_sock, REDIS_REPLY_TYPE reply_type, zval
 	// If this is an error response, check if it is a SYNC error, and throw in that case
 	if(reply_type == TYPE_ERR) {
 		if(memcmp(inbuf, "ERR SYNC", 9) == 0) {
-			zend_throw_exception(redis_exception_ce, "SYNC with master in progress", 0 TSRMLS_CC);
+            redis_throw_exception(redis_exception_ce, __FILE__, __LINE__, NULL, "SYNC with master in progress", redis_sock TSRMLS_CC);
 		}
 
 		// Set our last error

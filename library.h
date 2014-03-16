@@ -13,6 +13,7 @@ int redis_cmd_append_sstr_dbl(smart_str *str, double value);
 
 PHPAPI char * redis_sock_read(RedisSock *redis_sock, int *buf_len TSRMLS_DC);
 
+PHPAPI void redis_throw_exception(zend_class_entry *exception_ce, const char *file, int line, const char *cmd, const char *cause, RedisSock *redis_sock TSRMLS_DC);
 PHPAPI void redis_1_response(INTERNAL_FUNCTION_PARAMETERS, RedisSock *redis_sock, zval *z_tab, void *ctx);
 PHPAPI void redis_long_response(INTERNAL_FUNCTION_PARAMETERS, RedisSock *redis_sock, zval* z_tab, void *ctx);
 typedef void (*SuccessCallback)(RedisSock *redis_sock);
