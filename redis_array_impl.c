@@ -307,6 +307,8 @@ RedisArray *ra_load_array(const char *name TSRMLS_DC) {
 	efree(z_params_autorehash);
 	zval_dtor(z_params_retry_interval);
 	efree(z_params_retry_interval);
+	zval_dtor(z_params_reshard_level);
+	efree(z_params_reshard_level);
 	zval_dtor(z_params_pconnect);
 	efree(z_params_pconnect);
 	zval_dtor(z_params_lazy_connect);
