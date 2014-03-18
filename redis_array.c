@@ -893,6 +893,8 @@ PHP_METHOD(RedisArray, mget)
 
 	/* calls */
 	for(n = 0; n < ra->count; ++n) { /* for each node */
+		if (!argc_each[n]) continue;
+
 		/* copy args for MGET call on node. */
 		MAKE_STD_ZVAL(z_argarray);
 		array_init(z_argarray);
@@ -914,22 +916,21 @@ PHP_METHOD(RedisArray, mget)
 
 		/* cleanup args array */
 		zval_ptr_dtor(&z_argarray);
+		/* Error out if we didn't get a proper response */
+		if(Z_TYPE_P(z_ret) != IS_ARRAY) {
+			/* cleanup */
+			zval_dtor(z_ret);
+			efree(z_ret);
+			zval_ptr_dtor(&z_tmp_array);
+			efree(pos);
+			efree(redis_instances);
+			efree(argc_each);
+
+			/* failure */
+			RETURN_FALSE;
+		}
 
 		for(i = 0, j = 0; i < argc; ++i) {
-		    /* Error out if we didn't get a proper response */
-		    if(Z_TYPE_P(z_ret) != IS_ARRAY) {
-		        /* cleanup */
-		        zval_dtor(z_ret);
-		        efree(z_ret);
-		        zval_ptr_dtor(&z_tmp_array);
-		        efree(pos);
-		        efree(redis_instances);
-		        efree(argc_each);
-
-		        /* failure */
-		        RETURN_FALSE;
-		    }
-
 		    if(pos[i] != n) continue;
 
 			zend_hash_quick_find(Z_ARRVAL_P(z_ret), NULL, 0, j, (void**)&z_cur);
