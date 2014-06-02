@@ -42,7 +42,7 @@ PHPAPI void redis_throw_exception(zend_class_entry *exception_ce, const char *fi
     else {
         sprintf(message, "%s in %s, line %d, command: %s (%s:%d)", cause, file, line, cmd, redis_sock->host, redis_sock->port);
     }
-    php_log_err(message);
+    php_log_err(message TSRMLS_CC);
     zend_throw_exception(redis_exception_ce, message, 0 TSRMLS_CC);
 }
 

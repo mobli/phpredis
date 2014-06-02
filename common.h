@@ -30,6 +30,7 @@
 
 /* reply types */
 typedef enum _REDIS_REPLY_TYPE {
+	TYPE_EOF       = EOF,
 	TYPE_LINE      = '+',
 	TYPE_INT       = ':',
 	TYPE_ERR       = '-',
