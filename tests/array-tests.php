@@ -42,7 +42,7 @@ class Redis_Array_Test extends TestSuite
 
 		// check each key individually using a new connection
 		foreach($this->strings as $k => $v) {
-			list($host, $port) = split(':', $this->ra->_target($k));
+			list($host, $port) = explode(':', $this->ra->_target($k));
 
 			$r = new Redis;
 			$r->pconnect($host, (int)$port);
@@ -363,7 +363,7 @@ class Redis_Auto_Rehashing_Test extends TestSuite {
 			$target = $this->ra->_target($k);
 
 			// connect to the target host
-			list($host,$port) = split(':', $target);
+			list($host,$port) = explode(':', $target);
 			$r = new Redis;
 			$r->pconnect($host, $port);
 
