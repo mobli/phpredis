@@ -401,6 +401,9 @@ PHPAPI int redis_sock_get(int no_connect, zval *id, RedisSock **redis_sock TSRML
     {
         (*redis_sock)->lazy_connect = 0;
         if (redis_sock_server_open(*redis_sock, 1 TSRMLS_CC) < 0) {
+            if(!no_throw) {
+                redis_throw_exception(redis_exception_ce, __FILE__, __LINE__, NULL, "Redis server went away", *redis_sock TSRMLS_CC);
+            }
             return -1;
         }
     }
